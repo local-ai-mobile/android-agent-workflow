@@ -1,5 +1,7 @@
 # android-agent-workflow
 
+[![Website](https://img.shields.io/badge/Website-localai.shanaka.dev-blue.svg)](https://localai.shanaka.dev/)
+[![Google Play](https://img.shields.io/badge/Google_Play-Local_AI-414141.svg?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=dev.shanaka.localai)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![API](https://img.shields.io/badge/API-26%2B-brightgreen.svg?style=flat)](https://android-arsenal.com/api?level=26)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-purple.svg)](https://kotlinlang.org)
@@ -9,6 +11,14 @@
 > **Autonomous On-Device AI Agent Reasoning Loop with Mobile Context Distillation and WorkManager Scheduling for Android.**
 
 `android-agent-workflow` is a modular, 100% on-device agentic framework designed specifically for Android. It features a complete **Plan-Execute-Observe-Verify** ReAct reasoning loop, an **Intelligent 3-Tier Coordinator**, mobile-first **Context Distillation**, isolated reasoning scratchpads, and battery-safe background execution via AndroidX WorkManager.
+
+---
+
+## 📱 Powered by Local AI
+
+`android-agent-workflow` orchestrates the autonomous ReAct reasoning and mobile context distillation inside the **Local AI** application:
+- **Official Portal**: [localai.shanaka.dev](https://localai.shanaka.dev/)
+- **Get it on Google Play**: [dev.shanaka.localai](https://play.google.com/store/apps/details?id=dev.shanaka.localai)
 
 ---
 
@@ -85,6 +95,66 @@ val engine = AgentWorkflowEngine.Builder(context)
 lifecycleScope.launch {
     val session = engine.executeObjective("Check system telemetry and summarize notes")
     println("Status: ${session.status}")
+}
+```
+
+---
+
+## 🔗 End-to-End Recipe: Integrating All 3 Libraries
+
+Combine `android-inference-engine`, `android-mcp-tools`, and `android-agent-workflow` into an autonomous 100% offline agent:
+
+```kotlin
+import dev.localai.agent.workflow.core.AgentApprovalMode
+import dev.localai.agent.workflow.core.AgentWorkflowEngine
+import dev.localai.agent.workflow.tool.AgentTool
+import dev.localai.agent.workflow.tool.AgentToolParameter
+import dev.localai.agent.workflow.tool.AgentToolResult
+import dev.localaimobile.mcp.server.McpServerImpl
+import dev.localaimobile.mcp.tools.McpToolRegistry
+import io.github.localai.inference.api.EngineType
+import io.github.localai.inference.api.LocalInference
+import kotlinx.coroutines.flow.first
+import org.json.JSONObject
+
+// 1. Initialize On-Device Inference Engine (llama.cpp / LiteRT / Gemini Nano)
+val inferenceEngine = LocalInference.createEngine(context, EngineType.LLAMA_CPP).apply {
+    loadModel("/sdcard/Download/Qwen2.5-3B-Instruct-Q4_K_M.gguf", "Qwen/Qwen2.5-3B-Instruct")
+}
+
+// 2. Initialize MCP Standard Tool Registry (9 bundled on-device tools)
+val mcpRegistry = McpToolRegistry().apply { registerStandardTools(context) }
+val mcpServer = McpServerImpl(mcpRegistry)
+
+// 3. Adapt MCP Tools to Agent Tools
+val adaptedTools = mcpRegistry.listTools().map { mcpDef ->
+    object : AgentTool {
+        override val name = mcpDef.name
+        override val description = mcpDef.description
+        override val parameters = listOf(AgentToolParameter("args", "string", "JSON arguments", false))
+        override val isSensitive = mcpDef.defaultSensitive
+        override val isDeterministic = mcpDef.name in listOf("math_evaluator", "device_clock_timer")
+        override suspend fun execute(context: Context, arguments: Map<String, String>): AgentToolResult {
+            val jsonRpc = """{"jsonrpc":"2.0","method":"tools/call","params":{"name":"$name","arguments":${JSONObject(arguments)}}, "id":1}"""
+            val response = mcpServer.handleJsonRpc(jsonRpc)
+            return AgentToolResult(name = name, success = true, output = response)
+        }
+    }
+}
+
+// 4. Build AgentWorkflowEngine Connecting Inference & MCP Tools
+val agentEngine = AgentWorkflowEngine.Builder(context)
+    .withApprovalMode(AgentApprovalMode.SENSITIVE_ONLY)
+    .withInferenceClient { prompt ->
+        inferenceEngine.generateResponses(prompt).first()
+    }
+    .apply { adaptedTools.forEach { registerTool(it) } }
+    .build()
+
+// 5. Execute Autonomous Multi-Step Objective 100% Offline
+lifecycleScope.launch {
+    val session = agentEngine.executeObjective("/plan Check device telemetry, calculate available memory ratio, and summarize system health")
+    println("Resolution: ${session.resolution?.finalResponse}")
 }
 ```
 
